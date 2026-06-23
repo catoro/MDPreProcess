@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MDPreProcess</title>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.min.mjs" type="module"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0f0f11;
+      color: #e2e2e8;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    header { text-align: center; margin-bottom: 2.5rem; }
+    header h1 { font-size: 2rem; font-weight: 700; color: #fff; }
+    header p { margin-top: 0.4rem; color: #888; font-size: 0.95rem; }
+
+    .card {
+      background: #18181b;
+      border: 1px solid #27272a;
+      border-radius: 12px;
+      padding: 2rem;
+      width: 100%;
+      max-width: 680px;
+    }
+
+    #drop-zone {
+      border: 2px dashed #3f3f46;
+      border-radius: 8px;
+      padding: 2.5rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    #drop-zone.dragover { border-color: #7c3aed; background: #1e1630; }
+    #drop-zone svg { width: 2.5rem; height: 2.5rem; stroke: #52525b; margin-bottom: 0.75rem; }
+    #drop-zone p { color: #71717a; font-size: 0.9rem; }
+    #drop-zone strong { color: #a78bfa; }
+    #file-input { display: none; }
+
+    #file-name { margin-top: 1rem; font-size: 0.85rem; color: #a1a1aa; text-align: center; min-height: 1.2em; }
+
+    button#convert-btn {
+      margin-top: 1.25rem;
+      width: 100%;
+      padding: 0.75rem;
+      background: #7c3aed;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button#convert-btn:hover:not(:disabled) { background: #6d28d9; }
+    button#convert-btn:disabled { background: #3f3f46; cursor: not-allowed; color: #71717a; }
+
+    #status { margin-top: 1rem; font-size: 0.85rem; color: #a78bfa; text-align: center; min-height: 1.2em; }
+    #status.error { color: #f87171; }
+
+    #output-section { display: none; margin-top: 1.5rem; }
+    #output-section h2 {
+      font-size: 0.85rem; font-weight: 600; color: #71717a;
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.6rem;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    #output-section h2 span { color: #52525b; font-weight: 400; font-size: 0.8rem; }
+
+    textarea#md-output {
+      width: 100%; height: 340px;
+      background: #09090b; border: 1px solid #27272a; border-radius: 6px;
+      color: #d4d4d8; font-family: "Menlo", "Consolas", monospace;
+      font-size: 0.8rem; line-height: 1.6; padding: 0.75rem; resize: vertical;
+    }
+
+    .actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+    .actions button {
+      flex: 1; padding: 0.6rem; border-radius: 6px;
+      border: 1px solid #27272a; background: #27272a;
+      color: #d4d4d8; font-size: 0.85rem; cursor: pointer; transition: background 0.15s;
+    }
+    .actions button:hover { background: #3f3f46; }
+    .actions button.primary { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+    .actions button.primary:hover { background: #6d28d9; }
+
+    .badge {
+      display: inline-block; padding: 0.15rem 0.5rem;
+      background: #1e1630; border: 1px solid #4c1d95;
+      border-radius: 4px; font-size: 0.72rem; color: #a78bfa;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>MDPreProcess</h1>
+  <p>Convierte PPT o PDF a Markdown compacto — ahorra tokens con Claude</p>
+</header>
+
+<div class="card">
+  <div id="drop-zone">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round"
+        d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+    </svg>
+    <p>Arrastra tu archivo aquí o <strong>haz clic para seleccionar</strong></p>
+    <p style="margin-top:0.3rem; font-size:0.8rem; color:#52525b;">.pptx · .pdf &nbsp;·&nbsp; procesado localmente, nada se sube a ningún servidor</p>
+    <input type="file" id="file-input" accept=".pptx,.pdf" />
+  </div>
+
+  <div id="file-name"></div>
+  <button id="convert-btn" disabled>Convertir a Markdown</button>
+  <div id="status"></div>
+
+  <div id="output-section">
+    <h2>
+      Markdown generado
+      <span id="token-hint"></span>
+    </h2>
+    <textarea id="md-output" readonly></textarea>
+    <div class="actions">
+      <button onclick="copyMd()">Copiar</button>
+      <button class="primary" onclick="downloadMd()">Descargar .md</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  // ── pdf.js worker ──────────────────────────────────────────────────────────
+  import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.min.mjs";
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs";
+
+  // ── state ──────────────────────────────────────────────────────────────────
+  let selectedFile = null;
+  let lastFilename = "";
+
+  const dropZone   = document.getElementById("drop-zone");
+  const fileInput  = document.getElementById("file-input");
+  const fileNameEl = document.getElementById("file-name");
+  const convertBtn = document.getElementById("convert-btn");
+  const statusEl   = document.getElementById("status");
+  const outputSec  = document.getElementById("output-section");
+  const mdOutput   = document.getElementById("md-output");
+  const tokenHint  = document.getElementById("token-hint");
+
+  // ── drag & drop ────────────────────────────────────────────────────────────
+  dropZone.addEventListener("click", () => fileInput.click());
+  dropZone.addEventListener("dragover", e => { e.preventDefault(); dropZone.classList.add("dragover"); });
+  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
+  dropZone.addEventListener("drop", e => { e.preventDefault(); dropZone.classList.remove("dragover"); handleFile(e.dataTransfer.files[0]); });
+  fileInput.addEventListener("change", () => handleFile(fileInput.files[0]));
+
+  function handleFile(file) {
+    if (!file) return;
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (!["pptx", "pdf"].includes(ext)) { setStatus("Solo se aceptan archivos .pptx o .pdf", true); return; }
+    selectedFile = file;
+    lastFilename = file.name.replace(/\.[^.]+$/, "");
+    fileNameEl.textContent = `${file.name}  (${(file.size / 1024).toFixed(1)} KB)`;
+    convertBtn.disabled = false;
+    setStatus("");
+    outputSec.style.display = "none";
+  }
+
+  convertBtn.addEventListener("click", async () => {
+    if (!selectedFile) return;
+    convertBtn.disabled = true;
+    setStatus("Procesando…");
+    try {
+      const buf = await selectedFile.arrayBuffer();
+      const ext = selectedFile.name.split(".").pop().toLowerCase();
+      const md = ext === "pptx" ? await pptxToMd(buf) : await pdfToMd(buf);
+      mdOutput.value = md;
+      const tokens = Math.round(md.length / 4);
+      tokenHint.textContent = `~${tokens.toLocaleString()} tokens estimados`;
+      outputSec.style.display = "block";
+      setStatus("¡Listo!");
+    } catch (e) {
+      setStatus("Error: " + e.message, true);
+    } finally {
+      convertBtn.disabled = false;
+    }
+  });
+
+  // ── PPTX converter ─────────────────────────────────────────────────────────
+  async function pptxToMd(buffer) {
+    const zip = await JSZip.loadAsync(buffer);
+    const slideFiles = Object.keys(zip.files)
+      .filter(n => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+      .sort((a, b) => slideNumber(a) - slideNumber(b));
+
+    if (slideFiles.length === 0) throw new Error("No se encontraron diapositivas en el archivo.");
+
+    const lines = [];
+
+    for (let i = 0; i < slideFiles.length; i++) {
+      const xml = await zip.files[slideFiles[i]].async("string");
+      const doc = new DOMParser().parseFromString(xml, "application/xml");
+
+      // Extract title (ph type="title" or idx="0")
+      let title = "";
+      const titleSp = findTitleShape(doc);
+      if (titleSp) title = extractText(titleSp).trim();
+
+      lines.push(`## ${title || `Diapositiva ${i + 1}`}`);
+
+      // Body shapes — all <p:sp> that aren't the title
+      const shapes = [...doc.querySelectorAll("p\\:sp, sp")];
+      for (const sp of shapes) {
+        if (sp === titleSp) continue;
+        const paras = [...sp.querySelectorAll("p\\:p, p")].filter(el => el.tagName === "a:p" || el.tagName === "p:p" || el.localName === "p");
+        // Use a:p paragraphs inside the txBody
+        const txBody = sp.querySelector("p\\:txBody, txBody");
+        if (!txBody) continue;
+        const aParagraphs = [...txBody.querySelectorAll("*")].filter(el => el.localName === "p");
+        for (const para of aParagraphs) {
+          const text = extractText(para).trim();
+          if (!text) continue;
+          // Indent level from <a:pPr lvl="N">
+          const pPr = para.querySelector("*[lvl]") || para.children[0];
+          const lvl = parseInt(para.querySelector("*")?.getAttribute("lvl") || "0", 10) || 0;
+          lines.push("  ".repeat(lvl) + "- " + text);
+        }
+      }
+
+      lines.push("");
+    }
+
+    return lines.join("\n").trim();
+  }
+
+  function slideNumber(name) {
+    return parseInt(name.match(/slide(\d+)\.xml$/)?.[1] || "0", 10);
+  }
+
+  function findTitleShape(doc) {
+    const shapes = [...doc.querySelectorAll("*")].filter(el => el.localName === "sp");
+    for (const sp of shapes) {
+      const ph = [...sp.querySelectorAll("*")].find(el => el.localName === "ph");
+      if (!ph) continue;
+      const type = ph.getAttribute("type");
+      const idx  = ph.getAttribute("idx");
+      if (type === "title" || type === "ctrTitle" || idx === "0") return sp;
+    }
+    return null;
+  }
+
+  function extractText(el) {
+    return [...el.querySelectorAll("*")]
+      .filter(n => n.localName === "t")
+      .map(n => n.textContent)
+      .join("");
+  }
+
+  // ── PDF converter ──────────────────────────────────────────────────────────
+  async function pdfToMd(buffer) {
+    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+    const lines = [];
+
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+
+      // Group items by approximate y-position into text lines
+      const rows = new Map();
+      for (const item of content.items) {
+        if (!item.str?.trim()) continue;
+        const y = Math.round(item.transform[5]);
+        if (!rows.has(y)) rows.set(y, []);
+        rows.get(y).push({ x: item.transform[4], str: item.str, h: item.height });
+      }
+
+      if (rows.size === 0) continue;
+
+      // Sort rows top-to-bottom (PDF y is bottom-up)
+      const sorted = [...rows.entries()].sort((a, b) => b[0] - a[0]);
+
+      // Determine heading font size threshold
+      const maxH = Math.max(...[...rows.values()].flatMap(r => r.map(i => i.h)));
+
+      lines.push(`## Página ${p}`);
+      for (const [, items] of sorted) {
+        items.sort((a, b) => a.x - b.x);
+        const text = items.map(i => i.str).join(" ").trim();
+        if (!text || /^\d{1,3}$/.test(text)) continue; // skip page numbers
+        const h = Math.max(...items.map(i => i.h));
+        if (h >= maxH * 0.85 && sorted.length > 1) {
+          lines.push(`### ${text}`);
+        } else {
+          lines.push(`- ${text}`);
+        }
+      }
+      lines.push("");
+    }
+
+    return lines.join("\n").trim();
+  }
+
+  // ── utils ──────────────────────────────────────────────────────────────────
+  function setStatus(msg, isError = false) {
+    statusEl.textContent = msg;
+    statusEl.className = isError ? "error" : "";
+  }
+
+  window.copyMd = () => {
+    navigator.clipboard.writeText(mdOutput.value).then(() => setStatus("¡Copiado al portapapeles!"));
+  };
+
+  window.downloadMd = () => {
+    const blob = new Blob([mdOutput.value], { type: "text/markdown" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${lastFilename || "output"}.md`;
+    a.click();
+  };
+</script>
+</body>
+</html>
